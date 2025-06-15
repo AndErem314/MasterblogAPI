@@ -1,8 +1,16 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
 CORS(app)  # This will enable CORS for all routes
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["100 per hour"]  # Global rate limit
+)
 
 POSTS = [
     {"id": 1, "title": "First post", "content": "This is the first post."},
@@ -12,9 +20,14 @@ POSTS = [
 
 @app.route('/api/posts', methods=['GET'])
 def get_posts():
-    """Show all posts, optionally sorted by title or content"""
+    """
+    Show all posts, optionally sorted by title or content.
+    Use pagination to display results.
+    """
     sort_field = request.args.get('sort')
     direction = request.args.get('direction', 'asc')
+    page = int(request.args.get('page', 1))
+    limit = int(request.args.get('limit', 10))
 
     valid_sort_fields = {'title', 'content'}
     valid_directions = {'asc', 'desc'}
@@ -25,14 +38,25 @@ def get_posts():
     if direction not in valid_directions:
         return jsonify({"error": f"Invalid direction '{direction}'. Must be 'asc' or 'desc'."}), 400
 
+    posts = POSTS
     if sort_field:
         reverse = (direction == 'desc')
-        sorted_posts = sorted(POSTS, key=lambda post: post[sort_field].lower(), reverse=reverse)
-        return jsonify(sorted_posts), 200
+        posts = sorted(POSTS, key=lambda post: post[sort_field].lower(), reverse=reverse)
 
-    return jsonify(POSTS), 200
+    start = (page - 1) * limit
+    end = start + limit
+    paginated_posts = posts[start:end]
+
+    return jsonify({
+        "page": page,
+        "limit": limit,
+        "total": len(posts),
+        "posts": paginated_posts
+    }), 200
 
 
+
+@limiter.limit("5 per minute")
 @app.route('/api/posts', methods=['POST'])
 def add_post():
     """Handle the addition of a new blog post"""
@@ -63,6 +87,8 @@ def add_post():
     return jsonify(new_post), 201
 
 
+
+@limiter.limit("10 per minute")
 @app.route('/api/posts/<int:post_id>', methods=['DELETE'])
 def delete_post(post_id):
     """Delete a post by ID"""
@@ -75,6 +101,8 @@ def delete_post(post_id):
     return jsonify({"message": f"Post with id {post_id} has been deleted successfully."}), 200
 
 
+
+@limiter.limit("10 per minute")
 @app.route('/api/posts/<int:post_id>', methods=['PUT'])
 def update_post(post_id):
     """Update a post by ID, the title and content are optional for update"""
@@ -96,6 +124,8 @@ def update_post(post_id):
     return jsonify(post_to_update), 200
 
 
+
+@limiter.limit("10 per minute")
 @app.route('/api/posts/search', methods=['GET'])
 def search_posts():
     """Search for posts by title or content using query parameters"""
